@@ -7,6 +7,7 @@ def gen_seq_from_motifs(motif_files: str|list[str]) -> dict[str,float]:
     """
     Generate sequences from motifs
     """
+    import random
 
     # Create a list of motifs
     if isinstance(motif_files, str):
