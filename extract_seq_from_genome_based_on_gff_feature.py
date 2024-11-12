@@ -3,24 +3,11 @@ import typing
 import os
 import io
 from format_genbank import makegb
-try:
-    from Bio import Seq
-    from Bio.Align import PairwiseAligner
-    def translate(seq: str) -> str:
-        return str(Seq.translate(seq))
-    def align(seq1: str, seq2: str) -> str:
-        aligner = PairwiseAligner()
-        alignment = aligner.align(seq1, seq2, match_score=2, mismatch_score=0.5, open_gap_score=-2, extend_gap_score=-0.01)
-        seq1_aligned = str(alignment.target)
-        # seq2_aligned = str(alignment.query)
-        # score = alignment.score
-        return seq1_aligned
-except ImportError:
-    from smith_waterman import smith_waterman
-    def translate(seq: str) -> str:
-        return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
-    def align(seq1: str, seq2: str) -> str:
-        return smith_waterman(seq1, seq2)[0]
+from smith_waterman import smith_waterman
+def translate(seq: str) -> str:
+    return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
+def align(seq1: str, seq2: str) -> str:
+    return smith_waterman(seq1, seq2)[0]
 
 def align_translated_product_to_genomic_DNA(protein: str, dna: str, **kwargs) -> str:
     """
@@ -35,11 +22,7 @@ def align_translated_product_to_genomic_DNA(protein: str, dna: str, **kwargs) ->
         List of the 3 frame alignments
     """
     
-    alignments = []
-    for i in range(3):
-        n_dna = dna[i:]
-        n_dna = n_dna[: len(n_dna) - len(n_dna) % 3 ]
-        alignments.append( align(protein, translate(n_dna)) )
+    alignments = [align(protein, translate(dna[i:])) for i in range(3)]
     
     formatted_alns = []
     for aln in alignments:
@@ -97,32 +80,28 @@ def identifyCDS(target_protein, query_DNA):
     
     frags = []
     for k, aln in enumerate(alignments):
-        frame = aln[-1]
-        n_dna = query_DNA[frame:]
-        n_dna = n_dna[: len(n_dna) - len(n_dna) % 3 ]
+        n_dna = query_DNA[k:]
         trans_prot = translate( n_dna )
-        for frag in aln[0].split("-"):
-            if frag == "":
+        for frag in aln.split("-"):
+            if frag == "" or len(frag) < 5:
                 continue
             try:
-                loc = trans_prot.index(frag) * 3 + frame
+                loc = trans_prot.index(frag) * 3 + k
             except ValueError:
                 continue
-            if strand == "-":
-                loc = len(query_DNA) - loc - 1
             frags.append( (loc, frag) )
         
 
     cds_features = []
     for loc, frag in frags:
-        start =  loc + 1
-        end = len(frag) * 3 + start
         if strand == "+":
+            start =  loc + 1
+            end = len(frag) * 3 + start
             location = f"{start}..{end}"
         elif strand == "-":
-            rstart = len(query_DNA) - end + 1
-            rend = len(query_DNA) - start + 1
-            location = f"complement({rstart}..{rend})"
+            end = len(query_DNA) - loc
+            start = end - len(frag) * 3 + 1
+            location = f"complement({start}..{end})"
         cds_features.append(
             {
                 "type":"CDS",

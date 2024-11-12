@@ -31,7 +31,11 @@ Finding Guide RNA:
             CDS will be identified based on the protein sequence.
             The protein sequence must be encoded by the target sequence, splice information is not needed.
             If gb_file is not provided, the genbank file will be generated as the fasta filename but with gb extension.
+        --gene_start: The start index of the gene in the target sequence. Default is 0.
+        --gene_end: The end index of the gene in the target sequence. Default is -1.
+        --gene_length: The length of the gene in the target sequence. Ignores gene_end if provided.
         --search_offset: The offset to search for the guide RNA from the start and end of the CDS. Default is 25.
+
 
 Global Options:
     --mode=find_guide, -m find_guide: Run the script in find_guide mode.
@@ -47,7 +51,7 @@ import sys
 from extract_seq_from_genome_based_on_gff_feature import reverse_complement, identifyCDS
 from format_genbank import makegb
 
-from re import findall, IGNORECASE
+from re import finditer, IGNORECASE
 from shutil import which
 from subprocess import Popen, PIPE
 
@@ -189,75 +193,91 @@ class CAS:
         pam = [i.replace("D","[AGT]") for i in pam]
         pam = [i.replace("H","[ACT]") for i in pam]
         pam = [i.replace("V","[ACG]") for i in pam]
-        pam = [f"{'.'*self.length}{i}" for i in pam]
+        if self.location == "5":
+            pam = [f"(?=({i})({'.'*self.length}))" for i in pam]
+        else:
+            pam = [f"(?=({'.'*self.length})({i}))" for i in pam]
         return pam
 
-    def find_guides(self, seq: str, start:int=0, end:int=-1) -> list[str]:
+    def find_guides(self, seq: str, start:int=0, end:int=-1, include_pams=False) -> list[str]:
         """
         For the defined CAS system, find the guide RNAs for the target sequence.
         """
         if set(seq) - set("ATCG") != set():
             raise Exception("Invalid sequence")
+        seq = seq[start:end]
         rev_seq = reverse_complement( seq )
         seq, rev_seq = str(seq), str(rev_seq)
         for pam in self.search_formats:
-            fguides = findall(pam, seq, flags=IGNORECASE)
-            rguides = findall(pam, rev_seq, flags=IGNORECASE)
-            guides = [ i.upper() for i in fguides ] + [ i.lower() for i in rguides ]
+            fguides = finditer(pam, seq, flags=IGNORECASE)
+            rguides = finditer(pam, rev_seq, flags=IGNORECASE)
+            pam_group, guide_group = (0, 1) if self.location == "5" else (1, 0)
+            guides = [ [j.upper() for j in i.groups()] for i in fguides ] 
+            guides += [ [j.lower() for j in i.groups()] for i in rguides ]
+            pams = [ guide[pam_group] for guide in guides ]
+            guides = [ guide[guide_group] for guide in guides ]
+            if include_pams:
+                guides = [ 
+                    pam+guide if self.location == "5" else guide+pam
+                    for pam, guide in zip(pams, guides) ]
         return guides
-    
 
     def find_guides_and_blast_genome(self, 
         target:str, genome: str,
         start:int=0, end:int=-1,
-        output_file: str|os.PathLike|TextIO|None=None,
-        guide_blast_result_location: str|os.PathLike=None
+        guide_blast_result_location: str|os.PathLike=None,
+        blast_cutoff:float=1.0
     ):
         """
         For the defined CAS system, find the guide RNAs for the target sequence blast the genome for potential off-target sites.
         """
         # Find guides using for the target sequence.
-        guides = self.find_guides(target, start, end)
+        guides = [ (i,guide) for i,guide in enumerate(self.find_guides(target, start, end, True))]
+        actual_guides = [ i for i in self.find_guides(target, start, end) ]
 
         # Look for the blastn executable.
         blastn = which("blastn")
         if not blastn:
             warn("Blastn not found. Skipping BLAST search.")
-            return guides
+            return [ actual_guides[i] for i,_ in guides ]
         
-        # If the output file is specified, create a new file to write the guides to the file.
-        if output_file and ( isinstance(output_file, str) or isinstance(output_file, os.PathLike) ):
-            output_file = open(output_file, "w") 
+        # Check if the genome database exists.
         if guide_blast_result_location and ( isinstance(guide_blast_result_location, str) or isinstance(guide_blast_result_location, os.PathLike) ):
             guide_blast_result_location = os.path.abspath(guide_blast_result_location)
             os.makedirs(guide_blast_result_location, exist_ok=True)
         else:
             guide_blast_result_location = "."
         guide_index = 1
-        for guide in guides:
-            with( open( os.path.join(guide_blast_result_location,f"guide_{guide_index}.fa"), "w") ) as f:
-                f.write(f">guide_{guide_index}\n{guide}")
+        fail_index = 1
+        selected_guides = []
+        for guide_iteration, guide in guides:
+            temp_guide_loc = os.path.join(guide_blast_result_location, "temp_guide.fa")
+            with( open( temp_guide_loc, "w") ) as f:
+                f.write(f">guide_{guide_iteration}\n{guide}")
             
-            process = Popen( [blastn, "-db", genome,  "-query", "temp_guide.fa", "-outfmt", "6 qacc sacc evalue qseq sseq qstart qend", "-ungapped", "-task", "blastn-short"], stdout=PIPE, stderr=PIPE)
-            result, error = process.communicate( timeout=60)
-            result = result.decode("utf-8").split("\n")
-            result = [ i for i in result if i != "" if int(i.split("\t")[-1]) == len(guide) if float(i.split("\t")[2]) < 1 ]
-            result = len(result) > 1
+            process = Popen( [blastn, "-db", genome,  "-query", temp_guide_loc, "-outfmt", "6 qacc sacc evalue qseq sseq qstart qend", "-ungapped", "-task", "blastn-short"], stdout=PIPE, stderr=PIPE)
+            result, error = process.communicate()
+            result = result.decode("utf-8")
+            result = [ i for i in result.split("\n") if i != "" if int(i.split("\t")[-1]) == len(guide) ]
+            result = [ i for i in result if float(i.split("\t")[2]) < blast_cutoff ]
             if result:
-                os.remove( os.path.join(guide_blast_result_location,f"guide_{guide_index}.fa") )
-                continue
-            
-            if guide_blast_result_location == ".":
-                os.remove( os.path.join(guide_blast_result_location,f"guide_{guide_index}.fa") )
-            else:
+                selected_guides.append(guide_iteration)
                 res_loc = os.path.join(guide_blast_result_location, f"guide_{guide_index}.blast.txt")
-                res_file = open(res_loc, "w")
-                process = Popen( [blastn, "-db", genome,  "-query", "temp_guide.fa", "-ungapped", "-task", "blastn-short"], stdout=res_file, stderr=PIPE)
-                result, error = process.communicate( timeout=60)
-                result = result.decode("utf-8").split("\n")
-                res_file.close()
                 guide_index += 1
-        return guides
+            else:
+                res_loc = os.path.join(guide_blast_result_location, f"failed_guide_{fail_index}.blast.txt")
+                fail_index += 1
+            
+            if guide_blast_result_location != ".":
+                res_file = open(res_loc, "w")
+                process = Popen( [blastn, "-db", genome,  "-query", temp_guide_loc, "-ungapped", "-task", "blastn-short"], stdout=res_file, stderr=PIPE)
+                result, error = process.communicate( timeout=60)
+                res_file.close()
+                
+        if os.path.exists(temp_guide_loc):
+            os.remove(temp_guide_loc)
+        
+        return [ actual_guides[i] for i in selected_guides ]
 
 def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.stdout):
     """
@@ -274,11 +294,11 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
 
     for guide in guides:
         complement = False
-        guide_loc = dna_seq.find(guide)
+        guide_loc = dna_seq.lower().find(guide.lower())
         if guide_loc == -1:
-            guide_loc = dna_seq.find(reverse_complement(guide))
+            guide_loc = dna_seq.lower().find(reverse_complement(guide.lower()))
             if guide_loc == -1:
-                raise ValueError(f"Guide {guide} not found in sequence")
+                raise ValueError(f"Guide {guide} not found in sequence\n{dna_seq}")
             complement = True
         
         start = guide_loc + 1
@@ -304,9 +324,11 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
             features=other_annotations,
         )
     if type(output) == str:
-        f = open(output, "w")    
+        f = open(output, "w")
+    else:
+        f = output
     
-    print( gb, file=output )
+    print( gb, file=f )
 
     if type(output) == str:
         f.close()
@@ -317,37 +339,50 @@ if __name__ == "__main__":
     if len(sys.argv) < 2 or "-h" in sys.argv or "--help" in sys.argv:
         help()
         sys.exit(1)
+
+    argv = sys.argv.copy()
     find_guide = False
-    if "--mode=find_guide" in sys.argv:
+    if "--mode=find_guide" in argv:
         find_guide = True
-        sys.argv.remove("--mode=find_guide")
-    elif "-m\tfind_guide" in "\t".join(sys.argv):
+        argv.remove("--mode=find_guide")
+    elif "-m\tfind_guide" in "\t".join(argv):
         find_guide = True
-        sys.args.remove("-m")
-        sys.args.remove("find_guide")
+        argv.remove("-m")
+        argv.remove("find_guide")
     if find_guide:
-        if len(sys.argv) < 2:
+        if len(argv) < 2:
             help()
             sys.exit(1)
-        if len(sys.argv) < 3:
-            sys.argv.append("")
-        target, genome = sys.argv[1], sys.argv[2]
-        parsed_options = {
-            i.split("=")[0]:i.split("=")[1] for i in sys.argv
-            if i.startswith("--") and "=" in i
-        }
+        
+        parsed_options = {}
+        
+        remove = []
+        for i in argv:
+            if i.startswith("--") and "=" in i:
+                parsed_options[i.split("=")[0]] = i.split("=")[1]
+                remove.append(i)
+        for i in remove:
+            argv.remove(i)
+
+        target_name = ".".join(argv[1].split(".")[:-1])
+        target = argv[1]
         if os.path.exists(target):
             target = "".join( open(target).readlines() )
-            target = [i for i in target.split(">") if i != ""][1]
+            target = [i for i in target.split(">") if i != ""][0]
             target = "".join( target.split("\n")[1:] )
         elif set(target) - set("ATCG") != set():
             raise Exception("Invalid sequence or file for target sequence.")
-        db_locations = os.environ.get("BLASTDB",".") + ":."
-        db_locations = [ f for db_location in db_locations.split(":") for f in os.listdir(db_location) if db_location != "." ]
-        required_files = [genome+".nhr", genome+".nin", genome+".nsq"]
-        if not all( i in db_locations for i in required_files ):
-            warn("Genome database not found. Skipping BLAST search.")
-            genome = None
+        
+        genome = argv[2] if len(argv) > 2 else None
+        genome = None if genome == "" else genome
+
+        if genome is not None and genome != "":
+            db_locations = os.environ.get("BLASTDB",".") + ":."
+            db_locations = [ f for db_location in db_locations.split(":") for f in os.listdir(db_location) if db_location != "." ]
+            required_files = [genome+".nhr", genome+".nin", genome+".nsq"]
+            if not all( i in db_locations for i in required_files ):
+                warn("Genome database not found. Skipping BLAST search.")
+                genome = None
 
         cas = CAS(parsed_options.get("--cas_type",0))
         start = int(parsed_options.get("--start_index",0))
@@ -355,15 +390,21 @@ if __name__ == "__main__":
         output_file = parsed_options.get("--output_file",sys.stdout)
         guide_blast_result_location = parsed_options.get("--guide_blast_result_location",None)
         
-        def get_guides(start, end):
-            if genome is not None or genome != "":
+        def get_guides(s, e):
+            print(f"Finding guides for {cas.name} system in target sequence from {s} to {e}.")
+            if genome is not None and genome != "":
                 guides = cas.find_guides_and_blast_genome(
                     target, genome,
-                    start, end,
-                    output_file, guide_blast_result_location
+                    s, e,
+                    guide_blast_result_location
                 )
+                for i in os.listdir(guide_blast_result_location):
+                    if i.endswith(".blast.txt") and (i.startswith("guide_") or i.startswith("failed_guide_")):
+                        os.rename( 
+                            os.path.join(guide_blast_result_location, i), 
+                            os.path.join(guide_blast_result_location, f"{target_name}.{i}") )
             else:
-                guides = cas.find_guides(target, start, end)
+                guides = cas.find_guides(target, s, e)
             return guides
 
         protein_fa = parsed_options.get("--protein_fa",None)
@@ -374,13 +415,36 @@ if __name__ == "__main__":
         
         if protein_fa is not None:
             protein_seq = "".join( open(protein_fa).readlines() )
-            protein_seq = [i for i in protein_seq.split(">") if i != ""][1]
+            protein_seq = [i for i in protein_seq.split(">") if i != ""][0]
             protein_seq = "".join( protein_seq.split("\n")[1:] )
+
+            gene_start = int(parsed_options.get("--gene_start",0))
+            gene_end = int(parsed_options.get("--gene_end",-1))
+            if "gene_length" in parsed_options:
+                gene_end = gene_start + int(parsed_options["gene_length"])
+            try:
+                cds_loc = identifyCDS(protein_seq, target[gene_start:gene_end])
+            except ValueError:
+                print(f"Protein sequence({len(protein_seq)}) does not match target sequence({len(target)}).")
+                print("Check the protein sequence and template sequence.")
+                print("Also try providing the location of the gene in the target sequence using --gene_start=X and --gene_end=Y.")
+                sys.exit(1)
             
-            cds_loc = identifyCDS(protein_seq, target)
-            start_codon = cds_loc[0]["location"].split("..")
-            stop_codon = cds_loc[-1]["location"].split("..")
-            
+            # Add the offset for each CDS
+            for cds in cds_loc:
+                loc = cds["location"].replace("complement(","").replace(")","")
+                start, end = map(int, loc.split(".."))
+                start, end = start+gene_start, end+gene_start
+                if cds["strand"] == "-":
+                    loc = f"complement({start}..{end})"
+                else:
+                    loc = f"{start}..{end}"
+                cds["location"] = loc
+
+                if cds["translation"].startswith( protein_seq[:5]):
+                    start_codon = cds["location"].split("..")
+                if cds["translation"].endswith( protein_seq[-5:]):
+                    stop_codon = cds["location"].split("..")
             
             if "complement" in start_codon[0]:
                 start = int( start_codon[1].split( ")" )[0] )
@@ -388,8 +452,9 @@ if __name__ == "__main__":
             else:
                 start = int(start_codon[0])
                 end = int(stop_codon[1])
+            
             guides = get_guides(start-search_offset, start+search_offset)
-            start , end = end-search_offset, end+search_offset
+            start, end = end-search_offset, end+search_offset
             if gb_file is None:
                 gb_file = os.path.basename(protein_fa).replace(".fa",".gb")
                 gb_file = os.path.join( os.path.dirname(output_file), gb_file )
@@ -401,9 +466,14 @@ if __name__ == "__main__":
         if gb_file is not None:
             make_guide_gb(target, guides, os.path.basename(gb_file), cds_loc, gb_file)
         
-
+        if output_file is not None and output_file != sys.stdout and output_file != "":
+            f = open(output_file, "w")
+        else:
+            f = sys.stdout
         for i, guide in enumerate(guides):
-            print(f"Guide {i+1}: {guide}", file=output_file)
+            print(f"Guide {i+1}: {guide}", file=f)
+        if output_file is not None:
+            f.close()
         sys.exit(0) 
 
     target = sys.argv[1]

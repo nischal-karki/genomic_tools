@@ -99,24 +99,21 @@ Usage:
         seq2 = parse_fasta(sys.argv[2])[0] if isfile(sys.argv[2]) else sys.argv[2]
 
     options = {option.split("=")[0]: option.split("=")[1] for option in sys.argv if option.startswith("--") and "=" in option}
-    match_score = int(options.get("--match_score", 3))
-    mismatch_score = int(options.get("--mismatch_score", -3))
-    gap_penalty = int(options.get("--gap_penalty", -2))
+    match_score = float(options.get("--match_score", 3))
+    mismatch_score = float(options.get("--mismatch_score", -3))
+    gap_penalty = float(options.get("--gap_penalty", -2))
     characters_per_line = int(options.get("--characters_per_line", 60))
     
     aligned_seq1, aligned_seq2, score = smith_waterman(seq1, seq2, match_score=match_score, mismatch_score=mismatch_score, gap_penalty=gap_penalty)
     
-    print(f"Alignment score: {score}")
-    print(f"Seq 1:")
-    print("\t", pretty_format(seq1), sep="")
-    print(f"Seq 2: {seq2}")
-    print("\t", pretty_format(seq2), sep="")
+    print(f"Score: {score}")
     print(f"Alignment:")
     aligned_seq1 = pretty_format(aligned_seq1).split('\n')
     aligned_seq2 = pretty_format(aligned_seq2).split('\n')
     for aln_seq1, aln_seq2 in zip(aligned_seq1, aligned_seq2):
         print("\t", aln_seq1, sep="")
         print("\t", aln_seq2, sep="")
+        print()
 
 
 
