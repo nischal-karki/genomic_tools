@@ -245,6 +245,58 @@ def find_gene_loc(
                     f_locs[f"{feature}.found_{i+1}"] = val
     return f_locs
 
+def get_fasta_file_index( genome_file: str|os.PathLike|typing.IO ) -> dict[str,tuple[int,int,int]]:
+    """
+    Tries to load the fasta file index (genome_file + ".fai") and returns a dictionary of the chromosomes and their sequence length, start position, and line length.
+    """
+    if os.path.exists(genome_file + ".fai"):
+        indices = open(genome_file + ".fai", "r").readlines()
+        return { x.split(None,1)[0]:[*map(int,x.split()[1:-1])] for x in indices if x != "" }
+    
+    f = open(genome_file, "r") if isinstance(genome_file,str) else genome_file
+    
+    print("Could not find the index file for the genome file. Generating index file. This might take a while.")
+    
+    try:
+        fai_file = open(genome_file + ".fai", "w")
+    except PermissionError:
+        print("Could not write the index file. Please make sure you have write permissions in the directory.")
+        fai_file = sys.stdout
+
+    found_chromosomes = {}
+    
+    name = ""
+    line = [ f.readline() for i in range(2) ][1]
+    line_length = len(line) - 1
+    
+    f.seek(0)
+    line = f.readline()
+    while line:
+        if line.startswith(">"):
+            if name != "":
+                # The length of the sequence is the current position minus the start position minus the number of newlines in the sequence.
+                seq_length = f.tell() - len(line) - start
+                # Subtract the number of newlines in the sequence. Number of newlines is the length of the sequence divided by the line length.
+                seq_length -= seq_length // (1 + line_length) + 1
+                found_chromosomes[name] = [seq_length, start, line_length]
+                print(f"{name}\t{seq_length}\t{start}\t{line_length}\t{line_length+1}",file=fai_file)
+            name = line[1:].strip()
+            start = f.tell()
+        line = f.readline()
+        while not line.startswith(">") and line:
+            line = f.readline()
+    seq_length = f.tell() - len(line) - start
+    seq_length -= seq_length // (1 + line_length) + 1
+    found_chromosomes[name] = [seq_length, start, line_length]
+    print(f"{name}\t{seq_length}\t{start}\t{line_length}\t{line_length+1}",file=fai_file)
+    if isinstance(genome_file,str):
+        f.close()
+    else:
+        f.seek(0)
+    return found_chromosomes
+
+
+
 def get_gene_fa(
         genome_file: str|os.PathLike|typing.IO, 
         locations: dict[str,list[str]],
@@ -259,43 +311,32 @@ def get_gene_fa(
         A dictionary of the genes and their sequence and chromosome/start/stop position of the gene.
     """
     
-    chromosomes = { x.split(None,1)[0]:"" for x in locations.values() }
-    if chromosomes == {}:
-        raise ValueError("No chromosomes found in the locations.")
-
     f = open(genome_file, "r") if isinstance(genome_file,str) else genome_file
     if "b" in f.mode:
         f = io.TextIOWrapper(f)
+    genome_index = get_fasta_file_index(genome_file)
+    
 
-    keep = False
-    for line in f:
-        if line.startswith(">"):
-            chromosome = line[1:].strip()
-            if chromosome in chromosomes:
-                keep = True
-            else:
-                keep = False
-        elif keep:
-            chromosomes[chromosome] += line.strip()
-    f.close()
-
-    not_found = [x for x,y in chromosomes.items() if y == ""]
+    not_found = [x.split()[0] for x in locations.values() if x.split()[0] not in genome_index]
     if not_found != []:
         raise ValueError(f"Could not find {', '.join(not_found)} found in the genome file.")
 
     genes = {}
     for gene, locs in locations.items():
-        first = int(1e9)
-        last = 0
         chromosome = locs.split("\t")[0]
         vals = [*map(int,locs.split("\t")[3:5])]
-
-        first = min([first,*vals])
-        last = max([last,*vals])
+        line_length = genome_index[chromosome][2]
+        first = min(vals)
+        first_location = first // line_length + first + offset // line_length - offset
+        last = max(vals)
+        last_location = last // line_length + last + offset // line_length + offset
+        
+        f.seek(first_location)
+        seq = f.read(last_location - first_location).replace("\n","")
         
         chr_range = first-offset,last+offset
         chr_range = [0 if x < 0 else x for x in chr_range]
-        genes[gene] = ( chromosomes[chromosome][chr_range[0]:chr_range[1]], chromosome, *chr_range )
+        genes[gene] = ( seq, chromosome, *chr_range )
 
     return genes
 
