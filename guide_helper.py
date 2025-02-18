@@ -77,7 +77,7 @@ def oligos_to_order(target:str, case_formatting=False) -> str:
     oligo3 = three_prime.replace("$target_compliment$", target_complement)
     oligo3 = oligo3.replace("$target6_reverse$", target[5::-1])
 
-    return oligo5, oligo3
+    return oligo5, oligo3[::-1]
 
 class CAS:
     """
@@ -479,6 +479,6 @@ if __name__ == "__main__":
     target = sys.argv[1]
     case_formatting = False if len(sys.argv) < 3 else sys.argv[2].lower() == "true"
     five, three = oligos_to_order(target, case_formatting)
-    print(f"5' Oligo: {five}")
-    print(f"3' Oligo: {three}")
+    print(f"fwd: 5'{five}3'")
+    print(f"rev: 5'{three}3'")
 
