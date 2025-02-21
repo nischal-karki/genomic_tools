@@ -5,6 +5,7 @@ import io
 from format_genbank import makegb
 from smith_waterman import smith_waterman
 def translate(seq: str) -> str:
+    seq = seq[:len(seq)//3*3]
     return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
 def align(seq1: str, seq2: str) -> str:
     return smith_waterman(seq1, seq2)[0]

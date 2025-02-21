@@ -2,14 +2,18 @@
 This script is used for generating the oligos for the CAS9 system incorporating Hammerhead to be cloned in pNOC-Cas9 vector.
 Further, it can also be used to find the guide RNAs for a given target sequence using various CRISPR/Cas systems.
 
+Global Options:
+    --mode=find_guide, -m find_guide: Run the script in find_guide mode.
+    -h, --help: Print this help message.
+
 Oligo Generation:
-        python generate_CAS9_primers.py <target_sequence> <case_formatting>
+        python guide_helper.py <target_sequence> <case_formatting>
     Arguments:
         target_sequence: The target sequence of the CAS9 site
         case_formatting: True if you want the oligos to swap between upper and lower case, False otherwise
 
 Finding Guide RNA:
-        python generate_CAS9_primers.py <target_sequence> [genome] [--cas_type=0 --start_index=0 --end_index=-1 --output_file=None --guide_blast_result_location=None]
+        python guide_helper.py <target_sequence> [genome] [--cas_type=0 --start_index=0 --end_index=-1 --output_file=None --guide_blast_result_location=None]
     Arguments:
         target_sequence: The target sequence of the CAS9 site. Fasta file or sequence string is accepted.
         genome: The name of blast database to blast against for off-target sites. Optional, blast search will be skipped if not provided.
@@ -20,9 +24,10 @@ Finding Guide RNA:
                 SpCas9, SpCas9_VRER, SpCas9_VQR, xCas9, SpCas9_NG, SaCas9, AsCpf1, AsCpf1_RR, AsCpf1_RVR, LbCpf1, LbCpf1_RR, FnCas12a, CjCas9, NmCas9, StCas9, TdCas9
         --start_index: The start index of the target sequence. Optional, default is 0.
         --end_index: The end index of the target sequence. Optional, default is -1.
-        --output_file: Print out the guide sequences to a file.
+        --output_file: Print out the guide sequences to a file instead of stdout. This includes the detailed ordering information if --detailed_output is provided.
         --guide_blast_result_location: The location to save the blast results for the guide sequences.
         --gb_file: The location to save the genbank file for the target sequence.
+        --detailed_output: Print out the detailed ordering information for each guide RNA.
     Special Options:
         --protein_fa:
             The location of the protein fasta file.
@@ -36,10 +41,6 @@ Finding Guide RNA:
         --gene_length: The length of the gene in the target sequence. Ignores gene_end if provided.
         --search_offset: The offset to search for the guide RNA from the start and end of the CDS. Default is 25.
 
-
-Global Options:
-    --mode=find_guide, -m find_guide: Run the script in find_guide mode.
-    -h, --help: Print this help message.
 """
 
 def help():
@@ -56,28 +57,78 @@ from shutil import which
 from subprocess import Popen, PIPE
 
 from warnings import warn
-from typing import TextIO
+import math
 
 
-def oligos_to_order(target:str, case_formatting=False) -> str:
+def gene_frag_to_order(target:str, case_formatting=False) -> str:
     '''
     Given a target sequence, return the oligos to order
     '''
-    five_prime = "cga$reverse_compliment6$ctgatgagtccgtgaggacgaaacgagtaagctcgtc$target$g"
-    three_prime = "$target6_reverse$gactactcaggcactcctgctttgctcattcgagcag$target_compliment$caaa"
+    sg_RNA_scaffold = "gttttagagctagaaatagcaagttaaaataaggctagtccgttatcaacttgaaaaagtggcaccgagtcggtgcttttggccggcatggtcccagcctcctcgctggcgccggctgggcaacatgcttcggcatggcgaatgggac"
+    homology_5 = "tccctccatccacagaatcg"
+    homology_3 = "gtaccatgggaaagaaagga"
+    fseI_cutsite = "GGCCGGCC"
+    avrII_cutsite = "CCTAGG"
+    guide_with_HH = "$reverse_compliment6$ctgatgagtccgtgaggacgaaacgagtaagctcgtc$target$"
 
     complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
     complement.update({i.lower(): j.lower() for i, j in complement.items()})
     if case_formatting:
         target = target.upper()
-    oligo5 = five_prime.replace("$target$", target)
+    oligo = guide_with_HH.replace("$target$", target)
     target_complement = ''.join(complement[base] for base in target)
-    oligo5 = oligo5.replace("$reverse_compliment6$", target_complement[5::-1])
-    
-    oligo3 = three_prime.replace("$target_compliment$", target_complement)
-    oligo3 = oligo3.replace("$target6_reverse$", target[5::-1])
+    oligo = oligo.replace("$reverse_compliment6$", target_complement[5::-1])
+    front_frag = homology_5.upper() + fseI_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + fseI_cutsite.upper() 
+    back_frag = front_frag[-10:].upper() + avrII_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + avrII_cutsite.upper() + homology_3.upper()
+    front_frag = front_frag + back_frag[-10:].lower()
+    direct = homology_5.upper() + fseI_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + fseI_cutsite.upper() + homology_3.upper()
+    return front_frag, back_frag, direct
 
-    return oligo5, oligo3[::-1]
+def ordering_info( target:str, case_formatting=False ) -> str:
+    front_insert, back_insert, direct_insert = gene_frag_to_order(target, case_formatting)
+    front_primers = pick_primers(front_insert)
+    back_primers = pick_primers(back_insert)
+    direct_primers = pick_primers(direct_insert)
+    import random
+    gc_content = sum( [1 for insert in [ front_insert, back_insert, direct_insert ] for nt in insert if nt in "GC"] )
+    total = sum( [len(insert) for insert in [ front_insert, back_insert, direct_insert ]] )
+    additional_gc = int( 50 * (0.5 - gc_content / total) )
+    additional_gc = max(0, additional_gc) // 2
+    random_padding = list("AT" * (25-additional_gc) + "GC" * additional_gc)
+
+    random.shuffle(random_padding)
+    random_padding = "".join(random_padding)
+
+    return f"""guide RNA: {target}
+To insert into pNOC-Cas9 and derivatives,
+For other vectors, replace tccctccatccacagaatcg and gtaccatgggaaagaaagga with the appropriate homology arms.
+1) Order gene fragments and primers below.
+    *Gene fragments may need to be padded to be synthesized by Twist Bioscience.
+    * Random padding sequence: {random_padding}
+2) PCR amplify the gene fragments using the primers below.
+    *Use front and back if inserting pair of guides otherwise use direct insert.
+3) Digest pNOC-Cas9 with ClaI and KpnI.
+4) Use infusion cloning (or similar method) and mix all the fragments with digested pNOC-Cas9.
+5) Transform the mixture into competent cells and select for the correct clones.
+
+Ordering information GeneFrag:
+    Front Insert ({len(front_insert)}): {front_insert}
+
+    Back Insert ({len(back_insert)}): {back_insert}
+
+    Direct Insert ({len(direct_insert)}): {direct_insert}
+
+Oligos to order:
+    Front Insert:
+        fwd: 5' {front_primers[0]} 3'
+        rev: 5' {front_primers[1]} 3'
+    Back Insert:
+        fwd: 5' {back_primers[0]} 3'
+        rev: 5' {back_primers[1]} 3'
+    Direct Insert:
+        fwd: 5' {direct_primers[0]} 3'
+        rev: 5' {direct_primers[1]} 3'
+    """
 
 class CAS:
     """
@@ -278,6 +329,63 @@ class CAS:
             os.remove(temp_guide_loc)
         
         return [ actual_guides[i] for i in selected_guides ]
+    
+def calculate_tm(sequence, salt_concentration=50e-3, dna_concentration=0.5e-6):
+
+    sequence = sequence.upper()
+    # Thermodynamic parameters for nearest-neighbor pairs (ΔH in kJ/mol and ΔS in J/(mol·K))
+    nn_params = {
+        "AA": (-33.1, -92.9), "TT": (-33.1, -92.9),
+        "AT": (-30.1, -85.4), "TA": (-30.1, -89.1),
+        "CA": (-35.6, -95.0), "TG": (-35.6, -95.0),
+        "GT": (-35.1, -93.7), "AC": (-35.1, -93.7),
+        "CT": (-32.6, -87.9), "AG": (-32.6, -87.9),
+        "GA": (-34.3, -92.9), "TC": (-34.3, -92.9),
+        "CG": (-44.4, -113.8), "GC": (-41.0, -102.1),
+        "GG": (-33.5, -83.3), "CC": (-33.5, -83.3)
+    }
+    # Terminal base pair adjustments (ΔH in kJ/mol and ΔS in J/(mol·K))
+    terminal_params = {
+        "A": (9.6, 17.2), "T": (9.6, 17.2),
+        "G": (0.4, -11.7), "C": (0.4, -11.7)
+    }
+
+    dH = 0
+    dS = 0
+    for i,j in zip( sequence, sequence[1:]):
+        dH += nn_params[i+j][0]
+        dS += nn_params[i+j][1]
+
+    dH += terminal_params[sequence[0]][0]
+    dS += terminal_params[sequence[0]][1]
+    dH += terminal_params[sequence[-1]][0]
+    dS += terminal_params[sequence[-1]][1]
+
+    # Melting temperature calculation
+    tm = (dH * 1000) / ( dS + 8.314 * math.log( dna_concentration ) ) - 273.15
+    tm += 16.6 * math.log10(salt_concentration)
+    return tm
+    
+    
+def pick_primers(sequence, min_tm=50):
+    rev_seq = reverse_complement(sequence)
+    fwd = sequence[:15]
+    rev = rev_seq[:15]
+    while True:
+        fwd_tm = calculate_tm(fwd)
+        rev_tm = calculate_tm(rev)
+        if fwd_tm < min_tm or fwd[-1].upper() in "AT":
+            fwd += sequence[len(fwd)]
+        elif rev_tm - fwd_tm > 3:
+            fwd += sequence[len(fwd)]
+
+        if rev_tm < min_tm or rev[-1].upper() in "AT":
+            rev += rev_seq[len(rev)]
+        elif fwd_tm - rev_tm > 3:
+            rev += rev_seq[len(rev)]
+        if abs(fwd_tm - rev_tm) < 5 and fwd_tm > min_tm and rev_tm > min_tm and fwd[-1] not in "AT" and rev[-1].upper() not in "AT":
+            break
+    return fwd, rev
 
 def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.stdout):
     """
@@ -292,7 +400,7 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
         The text of the GenBank file.
     """
 
-    for guide in guides:
+    for i, guide in enumerate(guides):
         complement = False
         guide_loc = dna_seq.lower().find(guide.lower())
         if guide_loc == -1:
@@ -304,19 +412,15 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
         start = guide_loc + 1
         end = start + len(guide) - 1
 
-        fwd, rev = oligos_to_order(guide,True)
-
         other_annotations.append(
             {
                 "location": f"{start}..{end}" if not complement else f"complement({start}..{end})",
-                "label": "guide RNA",
+                "label": f"guide RNA {i+1}",
                 "type": "misc_RNA",
-                "note": f"""guide RNA: {guide}
-                Oligos to order:
-                    {fwd=}
-                    {rev=}"""
+                "note": f'"{ordering_info(guide, True)}"',
             }
         )
+        other_annotations[-1]["note"] = other_annotations[-1]["note"].replace("\n", "\n" + " " * 2)
     gb =  makegb(
             gene=seq_name,
             organism="Nannochloropsis",
@@ -349,6 +453,12 @@ if __name__ == "__main__":
         find_guide = True
         argv.remove("-m")
         argv.remove("find_guide")
+    if "--detailed_output" in argv:
+        detailed_output = True
+        argv.remove("--detailed_output")
+    else:
+        detailed_output = False
+
     if find_guide:
         if len(argv) < 2:
             help()
@@ -472,13 +582,15 @@ if __name__ == "__main__":
             f = sys.stdout
         for i, guide in enumerate(guides):
             print(f"Guide {i+1}: {guide}", file=f)
+            if detailed_output:
+                print(ordering_info(guide, True), file=f)
         if output_file is not None:
             f.close()
         sys.exit(0) 
 
     target = sys.argv[1]
     case_formatting = False if len(sys.argv) < 3 else sys.argv[2].lower() == "true"
-    five, three = oligos_to_order(target, case_formatting)
-    print(f"fwd: 5'{five}3'")
-    print(f"rev: 5'{three}3'")
+    print( ordering_info(target, case_formatting=case_formatting ) )
+
+    
 
