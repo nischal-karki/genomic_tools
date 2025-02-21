@@ -1,9 +1,11 @@
 """
-This script is used for generating the oligos for the CAS9 system incorporating Hammerhead to be cloned in pNOC-Cas9 vector.
+This script is used for generating the oligos for any CAS system incorporating Hammerhead to be cloned into a vector (by default it is designed for pNOC-CAS9 and derivatives).
 Further, it can also be used to find the guide RNAs for a given target sequence using various CRISPR/Cas systems.
 
 Global Options:
     --mode=find_guide, -m find_guide: Run the script in find_guide mode.
+    --homology_5: The 5' homology sequence. Default is tccctccatccacagaatcg.
+    --homology_3: The 3' homology sequence. Default is gtaccatgggaaagaaagga.
     -h, --help: Print this help message.
 
 Oligo Generation:
@@ -14,6 +16,8 @@ Oligo Generation:
 
 Finding Guide RNA:
         python guide_helper.py <target_sequence> [genome] [--cas_type=0 --start_index=0 --end_index=-1 --output_file=None --guide_blast_result_location=None]
+    
+    You can also use space separated options instead of =.
     Arguments:
         target_sequence: The target sequence of the CAS9 site. Fasta file or sequence string is accepted.
         genome: The name of blast database to blast against for off-target sites. Optional, blast search will be skipped if not provided.
@@ -60,32 +64,50 @@ from warnings import warn
 import math
 
 
-def gene_frag_to_order(target:str, case_formatting=False) -> str:
+def gene_frag_to_order(target:str, homology_5: str = "tccctccatccacagaatcg", homology_3: str = "gtaccatgggaaagaaagga", case_formatting=False) -> str:
     '''
     Given a target sequence, return the oligos to order
     '''
     sg_RNA_scaffold = "gttttagagctagaaatagcaagttaaaataaggctagtccgttatcaacttgaaaaagtggcaccgagtcggtgcttttggccggcatggtcccagcctcctcgctggcgccggctgggcaacatgcttcggcatggcgaatgggac"
-    homology_5 = "tccctccatccacagaatcg"
-    homology_3 = "gtaccatgggaaagaaagga"
-    fseI_cutsite = "GGCCGGCC"
-    avrII_cutsite = "CCTAGG"
+
+    non_cutters = {
+        "avrII_cutsite": "CCTAGG",
+        "asiSI_cutsite": "GCGATCGC",
+        "pacI_cutsite" : "TTAATTAA",
+        "sgrAI_cutsite": "CACCGGTG",
+        "bbvci_cutsite": "CCTCAGC",
+        "fseI_cutsite" : "GGCCGGCC",
+    }
+    
+    cutsite_front, cutsite_back = "", ""
+    for i, (enzyme, recog_site) in enumerate(non_cutters.items()):
+        if recog_site not in sg_RNA_scaffold and recog_site not in target:
+            if cutsite_front == "":
+                cutsite_front = enzyme, recog_site
+            elif cutsite_back == "":
+                cutsite_back = enzyme, recog_site
+            else:
+                break
+
     guide_with_HH = "$reverse_compliment6$ctgatgagtccgtgaggacgaaacgagtaagctcgtc$target$"
 
     complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
     complement.update({i.lower(): j.lower() for i, j in complement.items()})
+
     if case_formatting:
         target = target.upper()
+
     oligo = guide_with_HH.replace("$target$", target)
     target_complement = ''.join(complement[base] for base in target)
     oligo = oligo.replace("$reverse_compliment6$", target_complement[5::-1])
-    front_frag = homology_5.upper() + fseI_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + fseI_cutsite.upper() 
-    back_frag = front_frag[-10:].upper() + avrII_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + avrII_cutsite.upper() + homology_3.upper()
-    front_frag = front_frag + back_frag[-10:].lower()
-    direct = homology_5.upper() + fseI_cutsite.lower() + oligo + sg_RNA_scaffold.lower() + fseI_cutsite.upper() + homology_3.upper()
-    return front_frag, back_frag, direct
 
-def ordering_info( target:str, case_formatting=False ) -> str:
-    front_insert, back_insert, direct_insert = gene_frag_to_order(target, case_formatting)
+    front_frag = homology_5.upper() + cutsite_front[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_front[1].upper() 
+    back_frag = front_frag[-20:].upper() + cutsite_back[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_back[1].upper() + homology_3.lower()
+    direct = homology_5.upper() + cutsite_front[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_front[1].upper() + homology_3.lower()
+    return front_frag, back_frag, cutsite_front[0], cutsite_back[0], direct
+
+def ordering_info( target:str, homology_5: str = "tccctccatccacagaatcg", homology_3: str = "gtaccatgggaaagaaagga", case_formatting=False ) -> str:
+    front_insert, back_insert, cutsite_f, cutsite_b, direct_insert = gene_frag_to_order(target, homology_5, homology_3, case_formatting)
     front_primers = pick_primers(front_insert)
     back_primers = pick_primers(back_insert)
     direct_primers = pick_primers(direct_insert)
@@ -100,16 +122,18 @@ def ordering_info( target:str, case_formatting=False ) -> str:
     random_padding = "".join(random_padding)
 
     return f"""guide RNA: {target}
-To insert into pNOC-Cas9 and derivatives,
-For other vectors, replace tccctccatccacagaatcg and gtaccatgggaaagaaagga with the appropriate homology arms.
+To insert into {homology_5}...{homology_3} using infusion or similar method (default pNOC-Cas9):
 1) Order gene fragments and primers below.
     *Gene fragments may need to be padded to be synthesized by Twist Bioscience.
     * Random padding sequence: {random_padding}
 2) PCR amplify the gene fragments using the primers below.
     *Use front and back if inserting pair of guides otherwise use direct insert.
-3) Digest pNOC-Cas9 with ClaI and KpnI.
-4) Use infusion cloning (or similar method) and mix all the fragments with digested pNOC-Cas9.
+3) Linearize the vector. [pNOC-Cas9 derivatives: Digest with ClaI and KpnI]
+4) Use infusion cloning (or similar method) and mix all the fragments with digested vector.
 5) Transform the mixture into competent cells and select for the correct clones.
+
+Front and back inserts can be removed by digesting with {cutsite_f} and {cutsite_b} respectively.
+Direct insert can be removed by digesting with {cutsite_f}.
 
 Ordering information GeneFrag:
     Front Insert ({len(front_insert)}): {front_insert}
@@ -387,7 +411,7 @@ def pick_primers(sequence, min_tm=50):
             break
     return fwd, rev
 
-def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.stdout):
+def make_guide_gb(dna_seq, guides, seq_name, homology_5, homology_3,  other_annotations={}, output=sys.stdout):
     """
     Generates a GenBank file with guide RNA annotations DNA sequence.
     Args:
@@ -417,7 +441,7 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
                 "location": f"{start}..{end}" if not complement else f"complement({start}..{end})",
                 "label": f"guide RNA {i+1}",
                 "type": "misc_RNA",
-                "note": f'"{ordering_info(guide, True)}"',
+                "note": f'"{ordering_info(guide, homology_5, homology_3, True)}"',
             }
         )
         other_annotations[-1]["note"] = other_annotations[-1]["note"].replace("\n", "\n" + " " * 2)
@@ -439,158 +463,180 @@ def make_guide_gb(dna_seq, guides, seq_name, other_annotations={}, output=sys.st
     
     return output
 
+def parse_options(argv):
+    """
+    Parse the options from the command line.
+    """
+    parsed_options = {}
+    remove = []
+    for i in argv:
+        if i.startswith("-") and "=" in i:
+            parsed_options[i.split("=")[0]] = i.split("=")[1]
+            remove.append(i)
+    for i, j in zip(argv, argv[1:]):
+        if i.startswith("-") and not "=" in i:
+            remove += [i, j]
+            i = "--" + i.replace("-","")
+            parsed_options[i] = j
+            
+
+    for i in remove:
+        argv.remove(i) if i in argv else None
+
+    for i in argv:
+        if i.startswith("-") and i not in remove:
+            i = "--" + i.replace("-","")
+            parsed_options[i] = True
+            remove.append(i)
+    argv = [i for i in argv if not i.startswith("-")]
+
+    parsed_options["target"] = argv[1]
+    parsed_options["find_guide"] = parsed_options.get("--mode", "") == "find_guide" or parsed_options.get("--m", "") == "find_guide"
+
+    genome = argv[2] if len(argv) > 2 else ""
+    if genome == "":
+        return parsed_options
+
+    db_locations = os.environ.get("BLASTDB",".") + ":."
+    db_locations = [ f for db_location in db_locations.split(":") for f in os.listdir(db_location) if db_location != "." ]
+    required_files = [genome+".nhr", genome+".nin", genome+".nsq"]
+    if not all( [f in db_locations for f in required_files] ):
+        warn(f"Genome database {genome} not found in BLASTDB environment variable or current directory. Skipping BLAST search.")
+    else:
+        parsed_options["genome"] = genome
+    return parsed_options
+
+def main(argv):
+
+    parsed_options = parse_options(argv)
+    if parsed_options.get("--help", False) or parsed_options.get("-h", False):
+        help()
+        return
+
+    target = parsed_options["target"]
+    if os.path.exists(target):
+        target = "".join( open(target).readlines() )
+        target = [i for i in target.split(">") if i != ""][0]
+        target = "".join( target.split("\n")[1:] )
+    elif set(target) - set("ATCG") != set():
+        raise Exception("Invalid sequence or file for target sequence.")
+    homology_5 = parsed_options.get("homology_5", "tccctccatccacagaatcg")
+    homology_3 = parsed_options.get("homology_3", "gtaccatgggaaagaaagga")
+    case_formatting = parsed_options.get("case_formatting", False)
+    if not parsed_options.get("find_guide", False):
+        if len(target) > 30:
+            print("Target sequence is too long. I don't think this is the function you are trying to run.")
+            import time
+            time.sleep(1)
+            print("Here you go anyway:")
+            time.sleep(2)
+        print( ordering_info(target, homology_5, homology_3, case_formatting) )
+        return
+    
+    target_name = ".".join(parsed_options["target"].split(".")[:-1])
+    genome = parsed_options.get("genome",None)
+    cas = CAS(parsed_options.get("--cas_type",0))
+    start = int(parsed_options.get("--start_index",0))
+    end = int(parsed_options.get("--end_index",-1))
+    output_file = parsed_options.get("--output_file",sys.stdout)
+    detailed_output = parsed_options.get("--detailed_output",False)
+    guide_blast_result_location = parsed_options.get("--guide_blast_result_location",None)
+    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcg")
+    homology_3 = parsed_options.get("--homology_3","gtaccatgggaaagaaagga")
+    protein_fa = parsed_options.get("--protein_fa",None)
+    gb_file = parsed_options.get("--gb_file",None)
+    search_offset = int(parsed_options.get("--search_offset",25))
+    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcg")
+    homology_3 = parsed_options.get("--homology_3","gtaccatgggaaagaaagga")
+
+    def get_guides(s, e):
+        print(f"Finding guides for {cas.name} system in target sequence from {s} to {e}.")
+        if genome is not None and genome != "":
+            guides = cas.find_guides_and_blast_genome(
+                target, genome,
+                s, e,
+                guide_blast_result_location
+            )
+            for i in os.listdir(guide_blast_result_location):
+                if i.endswith(".blast.txt") and (i.startswith("guide_") or i.startswith("failed_guide_")):
+                    os.rename( 
+                        os.path.join(guide_blast_result_location, i), 
+                        os.path.join(guide_blast_result_location, f"{target_name}.{i}") )
+        else:
+            guides = cas.find_guides(target, s, e)
+        return guides
+
+    
+    guides = []
+    if protein_fa is not None:
+        protein_seq = "".join( open(protein_fa).readlines() )
+        protein_seq = [i for i in protein_seq.split(">") if i != ""][0]
+        protein_seq = "".join( protein_seq.split("\n")[1:] )
+
+        gene_start = int(parsed_options.get("--gene_start",0))
+        gene_end = int(parsed_options.get("--gene_end",-1))
+        if "gene_length" in parsed_options:
+            gene_end = gene_start + int(parsed_options["gene_length"])
+        try:
+            cds_loc = identifyCDS(protein_seq, target[gene_start:gene_end])
+        except ValueError:
+            print(f"Protein sequence({len(protein_seq)}) does not match target sequence({len(target)}).")
+            print("Check the protein sequence and template sequence.")
+            print("Also try providing the location of the gene in the target sequence using --gene_start=X and --gene_end=Y.")
+            sys.exit(1)
+        
+        # Add the offset for each CDS
+        for cds in cds_loc:
+            loc = cds["location"].replace("complement(","").replace(")","")
+            start, end = map(int, loc.split(".."))
+            start, end = start+gene_start, end+gene_start
+            if cds["strand"] == "-":
+                loc = f"complement({start}..{end})"
+            else:
+                loc = f"{start}..{end}"
+            cds["location"] = loc
+
+            if cds["translation"].startswith( protein_seq[:5]):
+                start_codon = cds["location"].split("..")
+            if cds["translation"].endswith( protein_seq[-5:]):
+                stop_codon = cds["location"].split("..")
+        
+        if "complement" in start_codon[0]:
+            start = int( start_codon[1].split( ")" )[0] )
+            end = int( stop_codon[0].split( "(" )[1] )
+        else:
+            start = int(start_codon[0])
+            end = int(stop_codon[1])
+        
+        guides = get_guides(start-search_offset, start+search_offset)
+        start, end = end-search_offset, end+search_offset
+        if gb_file is None:
+            gb_file = os.path.basename(protein_fa).replace(".fa",".gb")
+            gb_file = os.path.join( os.path.dirname(output_file), gb_file )
+    else:
+        cds_loc = {}
+    
+    guides += get_guides(start, end)
+
+    if gb_file is not None:
+        make_guide_gb(target, guides, target_name, homology_5, homology_3, cds_loc, gb_file)
+    
+    if output_file is not None and output_file != sys.stdout and output_file != "":
+        f = open(output_file, "w")
+    else:
+        f = sys.stdout
+    for i, guide in enumerate(guides):
+        print(f"Guide {i+1}: {guide}", file=f)
+        if detailed_output:
+            print(ordering_info(guide, homology_5, homology_3, True), file=f)
+    if output_file is not None:
+        f.close()
+
 if __name__ == "__main__":
     if len(sys.argv) < 2 or "-h" in sys.argv or "--help" in sys.argv:
         help()
         sys.exit(1)
 
     argv = sys.argv.copy()
-    find_guide = False
-    if "--mode=find_guide" in argv:
-        find_guide = True
-        argv.remove("--mode=find_guide")
-    elif "-m\tfind_guide" in "\t".join(argv):
-        find_guide = True
-        argv.remove("-m")
-        argv.remove("find_guide")
-    if "--detailed_output" in argv:
-        detailed_output = True
-        argv.remove("--detailed_output")
-    else:
-        detailed_output = False
-
-    if find_guide:
-        if len(argv) < 2:
-            help()
-            sys.exit(1)
-        
-        parsed_options = {}
-        
-        remove = []
-        for i in argv:
-            if i.startswith("--") and "=" in i:
-                parsed_options[i.split("=")[0]] = i.split("=")[1]
-                remove.append(i)
-        for i in remove:
-            argv.remove(i)
-
-        target_name = ".".join(argv[1].split(".")[:-1])
-        target = argv[1]
-        if os.path.exists(target):
-            target = "".join( open(target).readlines() )
-            target = [i for i in target.split(">") if i != ""][0]
-            target = "".join( target.split("\n")[1:] )
-        elif set(target) - set("ATCG") != set():
-            raise Exception("Invalid sequence or file for target sequence.")
-        
-        genome = argv[2] if len(argv) > 2 else None
-        genome = None if genome == "" else genome
-
-        if genome is not None and genome != "":
-            db_locations = os.environ.get("BLASTDB",".") + ":."
-            db_locations = [ f for db_location in db_locations.split(":") for f in os.listdir(db_location) if db_location != "." ]
-            required_files = [genome+".nhr", genome+".nin", genome+".nsq"]
-            if not all( i in db_locations for i in required_files ):
-                warn("Genome database not found. Skipping BLAST search.")
-                genome = None
-
-        cas = CAS(parsed_options.get("--cas_type",0))
-        start = int(parsed_options.get("--start_index",0))
-        end = int(parsed_options.get("--end_index",-1))
-        output_file = parsed_options.get("--output_file",sys.stdout)
-        guide_blast_result_location = parsed_options.get("--guide_blast_result_location",None)
-        
-        def get_guides(s, e):
-            print(f"Finding guides for {cas.name} system in target sequence from {s} to {e}.")
-            if genome is not None and genome != "":
-                guides = cas.find_guides_and_blast_genome(
-                    target, genome,
-                    s, e,
-                    guide_blast_result_location
-                )
-                for i in os.listdir(guide_blast_result_location):
-                    if i.endswith(".blast.txt") and (i.startswith("guide_") or i.startswith("failed_guide_")):
-                        os.rename( 
-                            os.path.join(guide_blast_result_location, i), 
-                            os.path.join(guide_blast_result_location, f"{target_name}.{i}") )
-            else:
-                guides = cas.find_guides(target, s, e)
-            return guides
-
-        protein_fa = parsed_options.get("--protein_fa",None)
-        gb_file = parsed_options.get("--gb_file",None)
-        search_offset = int(parsed_options.get("--search_offset",25))
-        
-        guides = []
-        
-        if protein_fa is not None:
-            protein_seq = "".join( open(protein_fa).readlines() )
-            protein_seq = [i for i in protein_seq.split(">") if i != ""][0]
-            protein_seq = "".join( protein_seq.split("\n")[1:] )
-
-            gene_start = int(parsed_options.get("--gene_start",0))
-            gene_end = int(parsed_options.get("--gene_end",-1))
-            if "gene_length" in parsed_options:
-                gene_end = gene_start + int(parsed_options["gene_length"])
-            try:
-                cds_loc = identifyCDS(protein_seq, target[gene_start:gene_end])
-            except ValueError:
-                print(f"Protein sequence({len(protein_seq)}) does not match target sequence({len(target)}).")
-                print("Check the protein sequence and template sequence.")
-                print("Also try providing the location of the gene in the target sequence using --gene_start=X and --gene_end=Y.")
-                sys.exit(1)
-            
-            # Add the offset for each CDS
-            for cds in cds_loc:
-                loc = cds["location"].replace("complement(","").replace(")","")
-                start, end = map(int, loc.split(".."))
-                start, end = start+gene_start, end+gene_start
-                if cds["strand"] == "-":
-                    loc = f"complement({start}..{end})"
-                else:
-                    loc = f"{start}..{end}"
-                cds["location"] = loc
-
-                if cds["translation"].startswith( protein_seq[:5]):
-                    start_codon = cds["location"].split("..")
-                if cds["translation"].endswith( protein_seq[-5:]):
-                    stop_codon = cds["location"].split("..")
-            
-            if "complement" in start_codon[0]:
-                start = int( start_codon[1].split( ")" )[0] )
-                end = int( stop_codon[0].split( "(" )[1] )
-            else:
-                start = int(start_codon[0])
-                end = int(stop_codon[1])
-            
-            guides = get_guides(start-search_offset, start+search_offset)
-            start, end = end-search_offset, end+search_offset
-            if gb_file is None:
-                gb_file = os.path.basename(protein_fa).replace(".fa",".gb")
-                gb_file = os.path.join( os.path.dirname(output_file), gb_file )
-        else:
-            cds_loc = {}
-        
-        guides += get_guides(start, end)
-
-        if gb_file is not None:
-            make_guide_gb(target, guides, os.path.basename(gb_file), cds_loc, gb_file)
-        
-        if output_file is not None and output_file != sys.stdout and output_file != "":
-            f = open(output_file, "w")
-        else:
-            f = sys.stdout
-        for i, guide in enumerate(guides):
-            print(f"Guide {i+1}: {guide}", file=f)
-            if detailed_output:
-                print(ordering_info(guide, True), file=f)
-        if output_file is not None:
-            f.close()
-        sys.exit(0) 
-
-    target = sys.argv[1]
-    case_formatting = False if len(sys.argv) < 3 else sys.argv[2].lower() == "true"
-    print( ordering_info(target, case_formatting=case_formatting ) )
-
-    
+    main(argv)
 

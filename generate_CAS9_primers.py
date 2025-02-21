@@ -11,7 +11,7 @@ Optional:
 def help():
     print(__doc__)
 
-from guide_helper import ordering_info
+from guide_helper import main
 import sys
 
 if __name__ == "__main__":
@@ -20,4 +20,5 @@ if __name__ == "__main__":
         sys.exit(1)
     target = sys.argv[1]
     case_formatting = False if len(sys.argv) < 3 else sys.argv[2].lower() == "true"
-    print( ordering_info(target, case_formatting=case_formatting ) )
+    sys.argv = [sys.argv[0], target, case_formatting, "--mode=find_guide" ]
+    main( sys.argv )
