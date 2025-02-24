@@ -520,9 +520,9 @@ def main(argv):
         target = "".join( target.split("\n")[1:] )
     elif set(target) - set("ATCG") != set():
         raise Exception("Invalid sequence or file for target sequence.")
-    homology_5 = parsed_options.get("homology_5", "tccctccatccacagaatcg")
-    homology_3 = parsed_options.get("homology_3", "gtaccatgggaaagaaagga")
-    case_formatting = parsed_options.get("case_formatting", False)
+    homology_5 = parsed_options.get("--homology_5", "tccctccatccacagaatcg")
+    homology_3 = parsed_options.get("--homology_3", "gtaccatgggaaagaaagga")
+    case_formatting = parsed_options.get("--case_formatting", False)
     if not parsed_options.get("find_guide", False):
         if len(target) > 30:
             print("Target sequence is too long. I don't think this is the function you are trying to run.")

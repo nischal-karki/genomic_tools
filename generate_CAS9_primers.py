@@ -20,5 +20,5 @@ if __name__ == "__main__":
         sys.exit(1)
     target = sys.argv[1]
     case_formatting = False if len(sys.argv) < 3 else sys.argv[2].lower() == "true"
-    sys.argv = [sys.argv[0], target, case_formatting, "--mode=find_guide" ]
+    sys.argv = [sys.argv[0], target ] + (["--case_formatting"] if case_formatting else [])
     main( sys.argv )
