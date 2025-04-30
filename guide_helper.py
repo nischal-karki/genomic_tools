@@ -518,7 +518,7 @@ def main(argv):
         target = "".join( open(target).readlines() )
         target = [i for i in target.split(">") if i != ""][0]
         target = "".join( target.split("\n")[1:] )
-    elif set(target) - set("ATCG") != set():
+    elif set(target.upper()) - set("ATCG") != set():
         raise Exception("Invalid sequence or file for target sequence.")
     homology_5 = parsed_options.get("--homology_5", "tccctccatccacagaatcg")
     homology_3 = parsed_options.get("--homology_3", "gtaccatgggaaagaaagga")
