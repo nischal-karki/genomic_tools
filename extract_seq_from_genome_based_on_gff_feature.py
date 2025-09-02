@@ -2,8 +2,12 @@ import sys
 import typing
 import os
 import io
-from format_genbank import makegb
-from smith_waterman import smith_waterman
+try:
+    from format_genbank import makegb
+    from smith_waterman import smith_waterman
+except ImportError:
+    from .format_genbank import makegb
+    from .smith_waterman import smith_waterman
 def translate(seq: str) -> str:
     seq = seq[:len(seq)//3*3]
     return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
