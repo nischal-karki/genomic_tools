@@ -64,7 +64,7 @@ from warnings import warn
 import math
 
 
-def gene_frag_to_order(target:str, homology_5: str = "tccctccatccacagaatcg", homology_3: str = "gtaccatgggaaagaaagga", case_formatting=False) -> str:
+def gene_frag_to_order(target:str, homology_5: str = "tccctccatccacagaatcgat", homology_3: str = "ggtaccatgggaaagaaagga", case_formatting=False) -> str:
     '''
     Given a target sequence, return the oligos to order
     '''
@@ -100,13 +100,15 @@ def gene_frag_to_order(target:str, homology_5: str = "tccctccatccacagaatcg", hom
     oligo = guide_with_HH.replace("$target$", target)
     target_complement = ''.join(complement[base] for base in target)
     oligo = oligo.replace("$reverse_compliment6$", target_complement[5::-1])
+    common_cutters = { "BamHI": "GGATCC", "EcoRI": "GAATTC", "HindIII": "AAGCTT", "XhoI": "CTCGAG" }
+    multiple_cloning_site = ''.join([common_cutters[i] for i in common_cutters])
 
-    front_frag = homology_5.upper() + cutsite_front[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_front[1].upper() 
-    back_frag = front_frag[-20:].upper() + cutsite_back[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_back[1].upper() + homology_3.lower()
+    front_frag = homology_5.upper() + cutsite_front[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_front[1].upper() + multiple_cloning_site
+    back_frag = multiple_cloning_site + cutsite_back[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_back[1].upper() + homology_3.lower()
     direct = homology_5.upper() + cutsite_front[1].lower() + oligo + sg_RNA_scaffold.lower() + cutsite_front[1].upper() + homology_3.lower()
     return front_frag, back_frag, cutsite_front[0], cutsite_back[0], direct
 
-def ordering_info( target:str, homology_5: str = "tccctccatccacagaatcg", homology_3: str = "gtaccatgggaaagaaagga", case_formatting=False ) -> str:
+def ordering_info( target:str, homology_5: str = "tccctccatccacagaatcgat", homology_3: str = "ggtaccatgggaaagaaagga", case_formatting=False ) -> str:
     front_insert, back_insert, cutsite_f, cutsite_b, direct_insert = gene_frag_to_order(target, homology_5, homology_3, case_formatting)
     front_primers = pick_primers(front_insert)
     back_primers = pick_primers(back_insert)
@@ -131,6 +133,8 @@ To insert into {homology_5}...{homology_3} using infusion or similar method (def
 3) Linearize the vector. [pNOC-Cas9 derivatives: Digest with ClaI and KpnI]
 4) Use infusion cloning (or similar method) and mix all the fragments with digested vector.
 5) Transform the mixture into competent cells and select for the correct clones.
+Multiple cloning site is included for front and back inserts, so you can use one of BamHI, EcoRI, HindIII, or XhoI to cut the synthesized fragments to join a pair of guides.
+Note that these enzymes cannot be used to cut pNOC-Cas9 and derivatives, use ClaI and KpnI instead.
 
 Front and back inserts can be removed by digesting with {cutsite_f} and {cutsite_b} respectively.
 Direct insert can be removed by digesting with {cutsite_f}.
@@ -520,8 +524,8 @@ def main(argv):
         target = "".join( target.split("\n")[1:] )
     elif set(target.upper()) - set("ATCG") != set():
         raise Exception("Invalid sequence or file for target sequence.")
-    homology_5 = parsed_options.get("--homology_5", "tccctccatccacagaatcg")
-    homology_3 = parsed_options.get("--homology_3", "gtaccatgggaaagaaagga")
+    homology_5 = parsed_options.get("--homology_5", "tccctccatccacagaatcgat")
+    homology_3 = parsed_options.get("--homology_3", "ggtaccatgggaaagaaagga")
     case_formatting = parsed_options.get("--case_formatting", False)
     if not parsed_options.get("find_guide", False):
         if len(target) > 30:
@@ -541,13 +545,13 @@ def main(argv):
     output_file = parsed_options.get("--output_file",sys.stdout)
     detailed_output = parsed_options.get("--detailed_output",False)
     guide_blast_result_location = parsed_options.get("--guide_blast_result_location",None)
-    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcg")
-    homology_3 = parsed_options.get("--homology_3","gtaccatgggaaagaaagga")
+    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcgat")
+    homology_3 = parsed_options.get("--homology_3","ggtaccatgggaaagaaagga")
     protein_fa = parsed_options.get("--protein_fa",None)
     gb_file = parsed_options.get("--gb_file",None)
     search_offset = int(parsed_options.get("--search_offset",25))
-    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcg")
-    homology_3 = parsed_options.get("--homology_3","gtaccatgggaaagaaagga")
+    homology_5 = parsed_options.get("--homology_5","tccctccatccacagaatcgat")
+    homology_3 = parsed_options.get("--homology_3","ggtaccatgggaaagaaagga")
 
     def get_guides(s, e):
         print(f"Finding guides for {cas.name} system in target sequence from {s} to {e}.")
