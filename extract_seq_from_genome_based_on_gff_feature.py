@@ -1,9 +1,25 @@
+"""This script searches a gff file for a search term and extracts the corresponding sequence from a genome file.
+This is redundant and the preferred method is to use select_genes.py.
+    Usage:
+        python extract_seq_from_genome_based_on_gff_feature.py <genome_file> <gff_file> <search_term> [offset=0] [output=standard output]
+        Arguments:
+            genome_file: The genome file in fasta format.
+            gff_file: gff file corresponding to the genome file.
+            search_term: The search term to use.
+            offset: Amount extra around the sequence to use when extracting the sequences. Default is 0.
+            output: The output file to write the gb text to. Default is to print the output.
+        Flags:
+            -fa, --fasta: Output the fasta sequences after the gb output.
+            -h, --help: Print this help message.
+"""
+
 import sys
 import typing
 import os
 import io
-from format_genbank import makegb
 from smith_waterman import smith_waterman
+from select_genes import select_genes
+
 def translate(seq: str) -> str:
     seq = seq[:len(seq)//3*3]
     return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
@@ -422,52 +438,6 @@ def reverse_complement(seq: str) -> str:
     """
     return "".join([complement[x] for x in seq[::-1]])
 
-def main(genome_file: str, gff_file: str, search_term: str, offset: int = 0, output: str | typing.TextIO = sys.stdout):
-    locations = find_gene_loc(gff_file, search_term)
-    if locations == {}:
-        print(f"No {search_term} found in the gff file.")
-        return
-    genes = get_gene_fa(genome_file, locations, offset)
-    fasta_seq = ""
-    for gene, (seq, chromosome, start, end) in genes.items():
-        features = find_features_between(gff_file, chromosome, start, end)
-        features = reformat_features_for_gb(seq, start, features)
-        
-        if isinstance(output,str):
-            real_out = open(output + gene + ".gb", "w")
-        else:
-            real_out = output
-            print(gene,file=output)
-        print(
-            makegb(
-                gene= gene,
-                seq= seq,
-                features= features,
-            ),
-            file=real_out,
-            flush=True
-        )
-        if isinstance(output,str):
-            real_out.close()
-        fasta_seq += f">{gene}\n{seq}\n"
-    return fasta_seq
-
-def help():
-    print(
-        """
-    Usage:
-        python extract_seq_from_genome_based_on_gff_feature.py <genome_file> <gff_file> <search_term> [offset=0] [output=standard output]
-        Arguments:
-            genome_file: The genome file in fasta format.
-            gff_file: gff file corresponding to the genome file.
-            search_term: The search term to use.
-            offset: Amount extra around the sequence to use when extracting the sequences. Default is 0.
-            output: The output file to write the gb text to. Default is to print the output.
-        Flags:
-            -fa, --fasta: Output the fasta sequences after the gb output.
-            -h, --help: Print this help message.
-        """
-    )
 
 if __name__ == "__main__":
     import sys
@@ -479,7 +449,7 @@ if __name__ == "__main__":
         sys.argv.remove("--fasta")
         fasta = True
     if "-h" in sys.argv or "--help" in sys.argv or len(sys.argv) < 4:
-        help()
+        print( __doc__ )
         sys.exit()
 
     args = {i:j for i,j in enumerate(sys.argv)}
@@ -488,6 +458,6 @@ if __name__ == "__main__":
     search_term = args.get(3)
     offset = int(args.get(4,0))
     output = args.get(5,sys.stdout)
-    fasta_seq = main(genome_file, gff_file, search_term, offset, output)
+    fasta_seq = select_genes(genome_file, gff_file, search_term, offset, output)
     if fasta:
         print(fasta_seq)
