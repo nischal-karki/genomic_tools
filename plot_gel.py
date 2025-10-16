@@ -21,6 +21,7 @@ if __name__ == "__main__":
         label = sys.argv.pop(label)
     else:
         label = None
+    files = None
     if "--start_enzyme_here" in sys.argv:
         start = sys.argv.index("--start_enzyme_here")
         sys.argv.pop(start)
@@ -28,8 +29,9 @@ if __name__ == "__main__":
         start = sys.argv.index("-e")
         sys.argv.pop(start)
     else:
-        start = 2
-    files = sys.argv[1:start]
+        files = [sys.argv.pop(i) for i,arg in enumerate(sys.argv) if arg.endswith((".fasta",".fa",".gb",".gbk"))]
+        start = 1
+    files = sys.argv[1:start] if files is None else files
     enzymes = sys.argv[start:]
 
     if "--glob" == sys.argv[1] or "-g" == sys.argv[1]:
