@@ -17,9 +17,12 @@ import sys
 import typing
 import os
 import io
-from smith_waterman import smith_waterman
-from select_genes import select_genes
-
+try:
+    from format_genbank import makegb
+    from smith_waterman import smith_waterman
+except ImportError:
+    from .format_genbank import makegb
+    from .smith_waterman import smith_waterman
 def translate(seq: str) -> str:
     seq = seq[:len(seq)//3*3]
     return "".join(codon_table[seq[i:i+3]] for i in range(0,len(seq),3))
@@ -341,12 +344,19 @@ def get_gene_fa(
     genes = {}
     for gene, locs in locations.items():
         chromosome = locs.split("\t")[0]
-        vals = [*map(int,locs.split("\t")[3:5])]
-        line_length = genome_index[chromosome][2]
-        first = min(vals)
-        first_location = first // line_length + first + offset // line_length - offset
-        last = max(vals)
-        last_location = last // line_length + last + offset // line_length + offset
+        vals = [*map(int,locs.split("\t")[3:5])] # Start and end positions of the gene
+
+        chromosome_location = genome_index[chromosome][1] # Location of the start of the first line of the named sequence
+        line_length = genome_index[chromosome][2] + 1 # Length of each line in the sequence (including newline)
+
+        first = min(vals) - offset - 1
+        n_lines = first // line_length
+        first_location = chromosome_location + first + n_lines
+
+        last = max(vals) + offset
+        n_lines = last // line_length
+        last_location = chromosome_location + last + n_lines
+        print(f"Extracting {gene} from {chromosome}:{first}-{last} (file location: {first_location}-{last_location})")
         
         f.seek(first_location)
         seq = f.read(last_location - first_location).replace("\n","")
