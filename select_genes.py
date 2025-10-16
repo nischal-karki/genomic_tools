@@ -13,6 +13,7 @@
 """
 
 import os
+import sys
 if os.path.abspath("../Useful Python/") not in sys.path:
     sys.path.insert(0, os.path.abspath("../Useful Python/"))
 from multiprocessing import Pool
@@ -21,14 +22,11 @@ from format_genbank import makegb
 from gen_seq_from_motifs import *
 
 def select_genes(genome_file: str, gff_file: str, search_term: str, offset: int = 0, output: str | typing.TextIO = sys.stdout):
-    locations = find_gene_loc(gff_file, search_term)
-    if locations == {}:
-        print(f"No {search_term} found in the gff file.")
-        return
-    genes = get_gene_fa(genome_file, locations, offset)
+    found = extract_seq_from_genome_based_on_gff_feature(
+        genome_file, gff_file, search_term, offset
+        )
     fasta_seq = ""
-    for gene, (seq, chromosome, start, end) in genes.items():
-        features = find_features_between(gff_file, chromosome, start, end)
+    for gene, (seq, start, features) in found.items():
         features = reformat_features_for_gb(seq, start, features)
         
         if isinstance(output,str):

@@ -18,10 +18,10 @@ import typing
 import os
 import io
 try:
-    from format_genbank import makegb
+    from select_genes import select_genes
     from smith_waterman import smith_waterman
 except ImportError:
-    from .format_genbank import makegb
+    from .select_genes import select_genes
     from .smith_waterman import smith_waterman
 def translate(seq: str) -> str:
     seq = seq[:len(seq)//3*3]
