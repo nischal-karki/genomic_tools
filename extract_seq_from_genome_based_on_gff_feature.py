@@ -18,10 +18,8 @@ import typing
 import os
 import io
 try:
-    from select_genes import select_genes
     from smith_waterman import smith_waterman
 except ImportError:
-    from .select_genes import select_genes
     from .smith_waterman import smith_waterman
 def translate(seq: str) -> str:
     seq = seq[:len(seq)//3*3]
@@ -315,8 +313,6 @@ def get_fasta_file_index( genome_file: str|os.PathLike|typing.IO ) -> dict[str,t
         f.seek(0)
     return found_chromosomes
 
-
-
 def get_gene_fa(
         genome_file: str|os.PathLike|typing.IO, 
         locations: dict[str,list[str]],
@@ -350,6 +346,7 @@ def get_gene_fa(
         line_length = genome_index[chromosome][2] + 1 # Length of each line in the sequence (including newline)
 
         first = min(vals) - offset - 1
+        first = 0 if first < 0 else first
         n_lines = first // line_length
         first_location = chromosome_location + first + n_lines
 
@@ -385,11 +382,9 @@ def extract_seq_from_genome_based_on_gff_feature(
     """
     locations = find_gene_loc(gff_file, search_terms)
     genes = get_gene_fa(genome_file, locations, offset)
-    features = {}
     result = {}
     for x, (seq, chromosome, start, end) in genes.items():
-        features[x] = find_features_between(gff_file, chromosome, start, end)
-        result[x] = (seq, min(start,end), features[x])
+        result[x] = (seq, min(start,end), find_features_between(gff_file, chromosome, start, end))
     return result
 
 def reformat_features_for_gb(seq, start, features: list[str]) -> list[dict[str,str]]:
@@ -402,12 +397,13 @@ def reformat_features_for_gb(seq, start, features: list[str]) -> list[dict[str,s
     """
     f = []
     for line in features:
+        line = line.replace("five_","5").replace("three_","3").replace("prime_","'")
         vals = line.split("\t")
         s = int(vals[3]) - start
         e = int(vals[4]) - start
         s,e = min(s,e),max(s,e)
-        s = 0 if s < 0 else s
-        e = 0 if e > len(seq) else e
+        s = 1 if s < 1 else s
+        e = len(seq) if e > len(seq) else e
         f.append({
             "type":vals[2],
             "location":f"{s}..{e}" if vals[6] == "+" else f"complement({s}..{e})",

@@ -17,9 +17,9 @@ import sys
 if os.path.abspath("../Useful Python/") not in sys.path:
     sys.path.insert(0, os.path.abspath("../Useful Python/"))
 from multiprocessing import Pool
-from extract_seq_from_genome_based_on_gff_feature import *
+from extract_seq_from_genome_based_on_gff_feature import extract_seq_from_genome_based_on_gff_feature, reformat_features_for_gb
 from format_genbank import makegb
-from gen_seq_from_motifs import *
+import typing
 
 def select_genes(genome_file: str, gff_file: str, search_term: str, offset: int = 0, output: str | typing.TextIO = sys.stdout):
     found = extract_seq_from_genome_based_on_gff_feature(
@@ -27,7 +27,7 @@ def select_genes(genome_file: str, gff_file: str, search_term: str, offset: int 
         )
     fasta_seq = ""
     for gene, (seq, start, features) in found.items():
-        features = reformat_features_for_gb(seq, start, features)
+        features = reformat_features_for_gb(seq, start+offset, features)
         
         if isinstance(output,str):
             real_out = open(output + gene + ".gb", "w")
